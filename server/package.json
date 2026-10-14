@@ -5,6 +5,7 @@
   "scripts": {
     "dev": "node --watch server.js",
     "start": "node server.js",
+    "test": "node --test",
     "build": "echo 'Server build complete'"
   },
   "dependencies": {

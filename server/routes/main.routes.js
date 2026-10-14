@@ -525,23 +525,14 @@ router.post('/turnos', async (req, res) => {
     `, [result.rows[0].id]);
     
     const turno = turnoCompleto.rows[0];
-    
-    // Crear mensaje de WhatsApp
-    const mensaje = `¡Hola ${turno.cliente_nombre}! 💇‍♀️
 
-Tu turno ha sido confirmado:
-📅 Fecha: ${new Date(turno.fecha).toLocaleDateString('es-AR')}
-🕐 Hora: ${turno.hora}
-💄 Servicio: ${turno.tratamiento_nombre}
-
-¡Te esperamos en HairStyle! ✨`;
-
+    // La notificación a la administradora se genera desde el cliente vía wa.me.
+    // El servidor NO envía ni simula envíos de WhatsApp.
     res.status(201).json({
       ...result.rows[0],
-      whatsappEnviado: true,
-      mensaje: mensaje,
       cliente: turno.cliente_nombre,
-      telefono: turno.cliente_telefono
+      telefono: turno.cliente_telefono,
+      servicio: turno.tratamiento_nombre
     });
   } catch (error) {
     console.error('Error creando turno:', error);
@@ -708,6 +699,15 @@ router.put('/config/precios-alisados', async (req, res) => {
     console.error('Error guardando precios alisados:', error);
     res.status(500).json({ error: 'Error del servidor' });
   }
+});
+
+// ==================== CONFIG CONTACTO ====================
+
+// Número de WhatsApp de la administradora, definido por variable de entorno.
+// Se usa para las notificaciones de turnos (wa.me desde el cliente).
+router.get('/config/contacto', (req, res) => {
+  const whatsappAdmin = String(process.env.ADMIN_WHATSAPP_NUMBER || '').replace(/[^0-9]/g, '');
+  res.json({ whatsappAdmin });
 });
 
 // ==================== GALERIA ====================

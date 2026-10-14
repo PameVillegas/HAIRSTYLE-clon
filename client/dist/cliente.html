@@ -166,8 +166,15 @@
   </div>
   <div id="modal-container"></div>
 
+  <script src="/assets/whatsapp-notify.js"></script>
   <script>
     var API = '/api';
+    function notificarTurnoAdmin(tipo, datos) {
+      if (window.WhatsAppNotify && window.WhatsAppNotify.notificarAdmin) {
+        window.WhatsAppNotify.notificarAdmin(tipo, datos);
+      }
+    }
+    var misTurnosCache = {};
     var u = localStorage.getItem('u');
     var t = localStorage.getItem('t');
     var user = null;
@@ -652,6 +659,12 @@
           
           if (result.id || result.success) {
             msg.innerHTML = '<div class="msg success">¡Turno solicitado! Te contactaremos.</div>';
+            notificarTurnoAdmin('nuevo', {
+              cliente: (user && user.nombre) || '',
+              fecha: data.fecha,
+              hora: data.hora,
+              servicio: tratamientoNombre
+            });
             setTimeout(function() { showMisTurnos(); }, 2000);
           } else {
             msg.innerHTML = '<div class="msg error">' + (result.error || 'Error') + '</div>';
@@ -675,9 +688,18 @@
         
         if (data.success && data.turnos && data.turnos.length > 0) {
           var html = '';
+          misTurnosCache = {};
           data.turnos.forEach(function(t) {
+            misTurnosCache[t.id] = t;
             var badgeClass = t.estado === 'pendiente' ? 'pendiente' : (t.estado === 'completado' ? 'completado' : 'cancelado');
             var badgeText = t.estado === 'pendiente' ? '⏳ Pendiente' : (t.estado === 'completado' ? '✅ Completado' : '❌ Cancelado');
+            var acciones = '';
+            if (t.estado === 'pendiente') {
+              acciones = '<div style="display:flex;gap:8px;margin-top:10px;">' +
+                '<button class="btn" style="flex:1;padding:8px;font-size:13px;" onclick="modificarMiTurno(' + t.id + ')">✏️ Modificar</button>' +
+                '<button class="btn secondary" style="flex:1;padding:8px;font-size:13px;" onclick="cancelarMiTurno(' + t.id + ')">❌ Cancelar</button>' +
+              '</div>';
+            }
             html += '<div class="turno-item" style="padding:15px;border-bottom:1px solid #eee;">' +
               '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">' +
                 '<span style="font-weight:700;color:#e91e63;font-size:16px;">📅 ' + t.fecha + '</span>' +
@@ -687,6 +709,7 @@
                 '<span style="font-size:14px;color:#555;">💅 ' + (t.tratamiento || 'Servicio') + '</span>' +
               '</div>' +
               '<span class="estado ' + badgeClass + '" style="padding:5px 10px;border-radius:20px;font-size:12px;">' + badgeText + '</span>' +
+              acciones +
             '</div>';
           });
           document.getElementById('turnos-content').innerHTML = html;
@@ -695,6 +718,91 @@
         }
       } catch(err) {
         document.getElementById('turnos-content').innerHTML = '<div class="empty-state">Error cargando</div>';
+      }
+    }
+    
+    function modificarMiTurno(id) {
+      var t = misTurnosCache[id];
+      if (!t) return;
+      
+      document.getElementById('modal-container').innerHTML =
+        '<div class="modal" style="display:flex;" onclick="if(event.target === this) closeModal()">' +
+          '<div class="modal-content" style="max-width:420px;">' +
+            '<h3>✏️ Modificar Turno</h3>' +
+            '<div id="mod-msg"></div>' +
+            '<form id="mod-turno-form">' +
+              '<div class="form-group"><label>Nueva fecha</label><input type="date" id="mod-fecha" value="' + (t.fecha ? String(t.fecha).substring(0,10) : '') + '" required></div>' +
+              '<div class="form-group"><label>Nuevo horario</label><input type="time" id="mod-hora" value="' + (t.hora ? String(t.hora).substring(0,5) : '') + '" required></div>' +
+              '<button type="submit" class="btn">Guardar cambios</button>' +
+              '<button type="button" class="btn secondary" onclick="closeModal()">Cancelar</button>' +
+            '</form>' +
+          '</div>' +
+        '</div>';
+      
+      document.getElementById('mod-turno-form').onsubmit = async function(e) {
+        e.preventDefault();
+        var msg = document.getElementById('mod-msg');
+        var nuevaFecha = document.getElementById('mod-fecha').value;
+        var nuevaHora = document.getElementById('mod-hora').value;
+        var fechaAnterior = t.fecha ? String(t.fecha).substring(0,10) : '';
+        var horaAnterior = t.hora ? String(t.hora).substring(0,5) : '';
+        
+        if (fechaAnterior === nuevaFecha && horaAnterior === nuevaHora.substring(0,5)) {
+          msg.innerHTML = '<div class="msg error">No modificaste la fecha ni el horario.</div>';
+          return;
+        }
+        
+        msg.innerHTML = '<div class="msg" style="background:#f0f0f0;">Guardando...</div>';
+        try {
+          var res = await fetch(API + '/turnos/' + id, {
+            method: 'PATCH',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({ fecha: nuevaFecha, hora: nuevaHora })
+          });
+          var result = await res.json();
+          
+          if (res.ok && result.success) {
+            notificarTurnoAdmin('modificado', {
+              antes: { cliente: (user && user.nombre) || '', fecha: fechaAnterior, hora: horaAnterior, servicio: t.tratamiento },
+              despues: { cliente: (user && user.nombre) || '', fecha: nuevaFecha, hora: nuevaHora, servicio: t.tratamiento }
+            });
+            closeModal();
+            showMisTurnos();
+          } else {
+            msg.innerHTML = '<div class="msg error">' + (result.error || 'No se pudo modificar el turno') + '</div>';
+          }
+        } catch(err) {
+          msg.innerHTML = '<div class="msg error">Error de conexión</div>';
+        }
+      };
+    }
+    
+    async function cancelarMiTurno(id) {
+      var t = misTurnosCache[id];
+      if (!t) return;
+      if (!confirm('¿Cancelar este turno?')) return;
+      
+      try {
+        var res = await fetch(API + '/turnos/' + id, {
+          method: 'PATCH',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({ estado: 'cancelado' })
+        });
+        var result = await res.json();
+        
+        if (res.ok && result.success) {
+          notificarTurnoAdmin('cancelado', {
+            cliente: (user && user.nombre) || '',
+            fecha: t.fecha,
+            hora: t.hora,
+            servicio: t.tratamiento
+          });
+          showMisTurnos();
+        } else {
+          alert(result.error || 'No se pudo cancelar el turno');
+        }
+      } catch(err) {
+        alert('Error de conexión');
       }
     }
     
@@ -1138,10 +1246,17 @@
               body: JSON.stringify(data)
             });
             var result = await res.json();
-            alert('Response: ' + JSON.stringify(result) + ', status: ' + res.status);
             
             if (result.id || result.success) {
               msg.innerHTML = '<div class="msg success">¡Solicitud enviada!</div>';
+              var selTrat = document.getElementById('sol-tratamiento');
+              var servicioSel = (selTrat && selTrat.options[selTrat.selectedIndex]) ? selTrat.options[selTrat.selectedIndex].text : '';
+              notificarTurnoAdmin('nuevo', {
+                cliente: (user && user.nombre) || '',
+                fecha: data.fecha,
+                hora: data.hora,
+                servicio: servicioSel.replace(/\s*\(.*\)\s*$/, '')
+              });
               setTimeout(function() { showMisTurnos(); }, 2000);
             } else {
               msg.innerHTML = '<div class="msg error">' + (result.error || 'Error: ' + JSON.stringify(result)) + '</div>';
@@ -1312,6 +1427,12 @@
           }
           
           msg.innerHTML = '<div class="msg success">¡Todo listo! Tu planilla fue guardada y el turno solicitado.</div>';
+          notificarTurnoAdmin('nuevo', {
+            cliente: (user && user.nombre) || '',
+            fecha: new Date(Date.now() + 7*24*60*60*1000).toISOString().split('T')[0],
+            hora: '10:00',
+            servicio: tratamientoNombre
+          });
           setTimeout(function() { closeModal(); showMisTurnos(); }, 2500);
           
         } catch(err) {

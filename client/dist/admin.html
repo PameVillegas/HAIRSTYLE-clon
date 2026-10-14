@@ -185,8 +185,15 @@
   
   <div id="modal-container"></div>
 
+  <script src="/assets/whatsapp-notify.js"></script>
   <script>
     var API = '/api';
+    function notificarTurnoAdmin(tipo, datos) {
+      if (window.WhatsAppNotify && window.WhatsAppNotify.notificarAdmin) {
+        window.WhatsAppNotify.notificarAdmin(tipo, datos);
+      }
+    }
+    var turnosAdminGlobal = [];
     var u = localStorage.getItem('u');
     var t = localStorage.getItem('t');
     
@@ -548,6 +555,7 @@
       try {
         var res = await fetch(API + '/turnos');
         var turnos = await res.json();
+        turnosAdminGlobal = turnos;
         
         if (turnos.length === 0) {
           document.getElementById('turnos-list').innerHTML = '<div class="empty-state">No hay turnos registrados</div>';
@@ -602,11 +610,21 @@
     async function cancelarTurno(id) {
       if (!confirm('¿Cancelar este turno?')) return;
       try {
-        await fetch(API + '/turnos/' + id, {
+        var res = await fetch(API + '/turnos/' + id, {
           method: 'PATCH',
           headers: {'Content-Type': 'application/json'},
           body: JSON.stringify({estado: 'cancelado'})
         });
+        var result = await res.json();
+        if (res.ok && result.success) {
+          var t = (turnosAdminGlobal || []).find(function(x) { return x.id === id; }) || {};
+          notificarTurnoAdmin('cancelado', {
+            cliente: t.cliente_nombre || '',
+            fecha: t.fecha,
+            hora: t.hora,
+            servicio: t.tratamiento_nombre || ''
+          });
+        }
         loadTurnos();
       } catch(err) { alert('Error'); }
     }
@@ -667,7 +685,15 @@
             });
             var result = await res.json();
             
-            if (result.success) {
+            if (result.id || result.success) {
+              var selCli = document.getElementById('turno-cliente');
+              var selTra = document.getElementById('turno-tratamiento');
+              notificarTurnoAdmin('manual', {
+                cliente: (selCli && selCli.options[selCli.selectedIndex]) ? selCli.options[selCli.selectedIndex].text : '',
+                fecha: data.fecha,
+                hora: data.hora,
+                servicio: (selTra && selTra.options[selTra.selectedIndex] ? selTra.options[selTra.selectedIndex].text : '').replace(/\s*-\s*\$.*$/, '')
+              });
               alert('¡Turno creado exitosamente!');
               showTurnos();
             } else {
